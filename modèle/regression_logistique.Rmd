@@ -1,0 +1,161 @@
+---
+title: "model_retard_rang"
+author: "kilian_ber"
+date: "2023-05-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+###Etude de modélisation retard/rang course BMX
+```
+
+```{r INSTALLATION DE LIBRARY}
+library(dplyr)
+library(glmnet)
+library(caret)
+```
+
+```{r chargement des données }
+data <- read.csv2("Analyse_BMX/dataset/base_bmx.csv")
+```
+
+```{r cut retard_T2}
+data <- data[complete.cases(data)& !grepl("DNS|DNF", data$Temps_Final), ]
+
+data$Retard_T2 <- as.numeric(as.character(data$Retard_T2))
+
+data$Retard_T2_Classes <- cut(data$Retard_T2, breaks = seq(0, max(data$Retard_T2), by = 0.1), labels = FALSE, include.lowest = TRUE)
+
+
+```
+
+
+```{r chargement des données }
+data <- data[complete.cases(data)& !grepl("DNS|DNF", data$Temps_Final), ]
+
+#Création de variable binaire pour le classement final en fonction du top espéré
+data$Top4 <- ifelse(data$Classement_final <= 4,1, 0)
+data$Top3 <- ifelse(data$Classement_final <= 3,1, 0)
+data$Top2 <- ifelse(data$Classement_final <= 2,1, 0)
+data$Top1 <- ifelse(data$Classement_final <= 1,1, 0)
+```
+
+```{r convertir en variable numérique}
+data$Retard_T2 <- as.numeric(as.character(data$Retard_T2))
+data$Position_Start <- as.numeric(as.character(data$Position_Start))
+data$Rang_T2 <- as.numeric(as.character(data$Rang_T2))
+data$Position_Start <- as.factor(data$Position_Start)
+data$Rang_T2 <- as.factor(data$Rang_T2)
+data$Rang_T2 <- factor(data$Rang_T2, levels = c("1", "2", "3", "4", "5", "6", "7", "8"))
+data$Retard_T3 <- as.numeric(as.character(data$Retard_T3))
+data$Temps_T1 <- as.numeric(as.character(data$Temps_T1))
+data$Temps_T2 <- as.numeric(as.character(data$Temps_T2))
+data$Temps_T3 <- as.numeric(as.character(data$Temps_T3))
+data$Temps_T4 <- as.numeric(as.character(data$Temps_T4))
+data$Temps_Final <- as.numeric(as.character(data$Temps_Final))
+
+
+```
+
+
+```{r création de l'esnemble d'entrainement et de test du modèle}
+set.seed(123)
+trainIndex <- sample(1:nrow(data), nrow(data)*0.8)
+trainData <- data[trainIndex,]
+testData <- data[-trainIndex,]
+
+# Sélection des variables explicatives
+predictors <- c("Position_Start", "Rang_T2", "Retard_T2")
+
+evaluate_model <- function(predictors, target) {
+  # Création du modèle de régression logistique
+  formula <- as.formula(paste(target, "~", paste(predictors, collapse = "+")))
+  model <- glm(formula, family = "binomial", data = trainData[,c(predictors, target)])
+  
+  # Prédiction sur l'ensemble de test
+  predictions <- predict(model, newdata = testData[,predictors], type = "response")
+
+  # Conversion des probabilités en classe binaire
+  predictions <- ifelse(predictions > 0.5, 1, 0)
+
+  # Évaluation du modèle
+  confusionMatrix <- table(Predicted = predictions, Actual = testData[[target]])
+
+  # Vrais positifs, faux positifs, vrais négatifs, faux négatifs
+  TP <- confusionMatrix[2, 2]
+  FP <- confusionMatrix[1, 2]
+  TN <- confusionMatrix[1, 1]
+  FN <- confusionMatrix[2, 1]
+
+  # Précision
+  precision <- TP / (TP + FP)
+
+  # Rappel
+  recall <- TP / (TP + FN)
+
+  # Score F1
+  F1 <- 2 * (precision * recall) / (precision + recall)
+
+  # Exactitude
+  accuracy <- (TP + TN) / (TP + FP + TN + FN)
+
+  # Affichage des résultats
+  cat("Precision: ", precision, "\n")
+  cat("Recall: ", recall, "\n")
+  cat("F1 Score: ", F1, "\n")
+  cat("Accuracy: ", accuracy, "\n")
+
+  # Affichage des coefficients
+  coefficients <- coef(model)
+  print(coefficients)
+}
+
+# Utilisation de la fonction avec différentes cibles
+cat("Modèle pour top 4 :", "\n")
+evaluate_model(c("Position_Start", "Rang_T2", "Retard_T2"), "Top4")
+
+
+cat("Modèle pour top 3 :", "\n")
+evaluate_model(c("Position_Start", "Rang_T2", "Retard_T2"), "Top3")
+
+cat("Modèle pour top 2 :", "\n")
+evaluate_model(c("Position_Start", "Rang_T2", "Retard_T2"), "Top2")
+
+cat("Modèle pour top 1 :", "\n")
+evaluate_model(c("Position_Start", "Rang_T2", "Retard_T2"), "Top1")
+
+```
+
+```{r}
+library(ggridges)
+library(ggsankey)
+river <- data
+river_use <- river |> dplyr::select(Position_Start, Rang_T1, Rang_T2, Rang_T3, Rang_T4, Top4)
+df <- river_use |>
+  make_long(Position_Start, Rang_T1, Rang_T2, Rang_T3, Rang_T4,Top4)
+
+
+pl <- ggplot(df, 
+             aes(x = x,
+                 next_x = next_x,
+                 node = node,
+                 next_node = next_node,
+                 fill = factor(node),
+                 label = node))
+pl <- pl + geom_sankey(flow.alpha = 0.5,
+                 node.color = "black",
+                 show.legend = TRUE)
+pl <- pl +geom_sankey_label(size = 3, color = "black", fill = "white", hjust = -0.5, vjust = -0.5)
+pl <- pl + theme_bw()
+pl <- pl + theme(axis.title.x = element_blank(),
+                 axis.text.y = element_blank(),
+                 axis.ticks = element_blank(),
+                 panel.grid = element_blank())
+pl <- pl + labs(title="Répartition des cas de courses")
+pl <- pl + labs(fill = 'Places')
+
+pl <- pl + scale_fill_manual(values = c('1' = "#003300", '2' = "#00FF00",'3' = "#00FFFF", '4' = "#3333FF", '5' = "#FFFF00", '6' = "#FF6600", '7' = "#FF0000", '8' = "#FF00CC" ))
+
+
+```
+

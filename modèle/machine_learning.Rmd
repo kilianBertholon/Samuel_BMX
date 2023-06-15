@@ -1,0 +1,1004 @@
+---
+title: "Statistiques"
+output: html_document
+date: "2023-04-18"
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(gridExtra)
+library(grid)
+library(purrr)
+library(ggpubr)
+library(RColorBrewer)
+library(stringr)
+library(stringdist)
+library(fuzzyjoin)
+```
+
+
+
+```{r importation fichier}
+#Ouverture du fichier 
+base_donnee <- read.csv2("data/complet/base_V1.csv", sep =";")
+Santiago <- read.csv2("data/complet/Santiago.csv", sep =";")
+Zolder <- read.csv2("data/complet/Zolder.csv", sep =";")
+Zolder_2 <- read.csv2("data/complet/Zolder_2.csv", sep =";")
+
+base_donnee_V2 <- rbind(base_donnee, Santiago, Zolder, Zolder_2)
+
+
+
+base_donnee_V2 <- read.csv2("data/complet/base_donnee_V3.csv", sep = ";")
+
+
+base_donnee_V2 <- read.csv2("data/complet/base_bmx.csv", sep = ";")
+
+
+
+
+
+
+
+
+
+
+```
+
+```{r vérification que les occurences sont bien unique}
+Occ_Saison <- data.frame(table(base_donnee_V2$Saison)) ##C'est okay pour saison 
+
+Occ_Typologie <- data.frame(table(base_donnee_V2$Typologie_Epreuves)) ##OK
+
+
+Occ_Epreuves <- data.frame(table(base_donnee_V2$Epreuves)) ##Ok pour épreuves 
+
+
+Occ_Date <- data.frame(table(base_donnee_V2$Date)) #Date Okay 
+
+Occ_Manche <- data.frame(table(base_donnee_V2$Manche)) #Okay si 9
+
+
+Occ_Heat <- data.frame(table(base_donnee_V2$Heat)) #Okay 
+
+Occ_Categorie <- data.frame(table(base_donnee_V2$Categorie)) #OKAY car 4 cat
+
+Occ_Position_Start <- data.frame(table(base_donnee_V2$Position_Start)) #Okay
+
+#Supprimer les caractères posant problèmes 
+base_donnee_V2 <- base_donnee_V2 |> mutate(nom = trimws(nom, which = "right"))
+base_donnee_V2 <- base_donnee_V2 |> mutate(nom = trimws(nom, which = "left"))
+
+base_donnee_V2 <- base_donnee_V2 |> mutate(nom = str_replace(nom, "°", "")) 
+
+base_donnee_V2 <- base_donnee_V2 |> mutate(nom = str_replace(nom, " o ", "")) 
+
+
+#######################################################
+noms_uniques <- unique(base_donnee_V2$nom)
+
+trouver_corriger_noms <- function(noms, donnees, seuil_distance) {
+  noms_corriges <- noms
+  
+  for (i in 1:length(noms)) {
+    for (j in (i + 1):length(noms)) {
+      distance <- adist(noms[i], noms[j])
+      
+      if (!is.na(distance) &&
+          distance <= seuil_distance) {
+        # Trouve l'index du nom qui apparaît en premier dans les données
+        idx_min <-
+          min(which(donnees$nom == noms[i]),
+              which(donnees$nom == noms[j]))
+        
+        # Corrige le nom en fonction de l'index trouvé
+        if (idx_min %in% which(donnees$nom == noms[i])) {
+          noms_corriges[noms_corriges == noms[j]] <- noms[i]
+        } else {
+          noms_corriges[noms_corriges == noms[i]] <- noms[j]
+        }
+      }
+    }
+  }
+  
+  return(noms_corriges)
+}
+
+##Applications de la fonction 
+noms_corriges <- trouver_corriger_noms(noms_uniques, base_donnee_V2 , seuil_distance = 2)
+
+
+#Affichage des modfications de nom dans un dataframe
+noms_df <- data.frame(Nom_Unique = noms_uniques, Nom_Corrige = noms_corriges)
+
+
+#Affichage des différences dans un dataframe
+noms_corriges_df <- noms_df[noms_df$Nom_Unique != noms_df$Nom_Corrige, ]
+
+##Suppression des modifications qui pose problème 
+noms_corriges_df <- noms_corriges_df[!grepl("WHYTE Tre", noms_corriges_df$Nom_Unique), ]
+
+base_donnee_V2 <- base_donnee_V2 %>%
+  mutate(nom = ifelse(
+    nom %in% noms_corriges_df$Nom_Unique,
+    noms_corriges_df$Nom_Corrige[match(nom, noms_corriges_df$Nom_Unique)],
+    nom
+  ))
+
+
+#########################################################
+Occ_nom <- data.frame(table(base_donnee_V2$nom)) ##Okay pour les noms 
+
+#Filtrer les code pays lorsqu'il ya des erreurs
+base_donnee_V2 <- base_donnee_V2 |>   filter(code_pays != 6)
+Occ_CP <- data.frame(table(base_donnee_V2$code_pays))
+
+Occ_Rang1 <- data.frame(table(base_donnee_V2$Rang_T1)) #Okay
+Occ_Rang2 <- data.frame(table(base_donnee_V2$Rang_T2)) #Okay
+Occ_Rang3 <- data.frame(table(base_donnee_V2$Rang_T3)) #Okay
+Occ_Rang4 <- data.frame(table(base_donnee_V2$Rang_T4)) #Okay
+```
+
+```{r obtenir le classemement final des courses}
+classement_final <- base_donnee_V2 |> 
+  group_by(Typologie_Epreuves,Saison,Heat, Manche, Date, Categorie)
+
+donnees_classement <- classement_final |>
+  arrange(Temps_Final, .by_group = TRUE) |>
+  mutate(Classement_final = row_number()) |>
+  ungroup()
+
+
+beug <- donnees_classement |> filter(Classement_final > 8)
+donnees_classement <- donnees_classement |> filter(Classement_final <9)
+base_donnee <- donnees_classement |> relocate(Classement_final, .before =  "Temps_Final")
+
+```
+
+```{r pressure, echo=FALSE}
+base_donnee_num <- base_donnee %>%
+  mutate(Position_Start = as.numeric(Position_Start),
+         n.velo = as.numeric(n.velo),
+         Rang_T1 = as.numeric(Rang_T1),
+         Temps_T1 = as.numeric(Temps_T1),
+         Retard_T1 = as.numeric(Retard_T1),
+         Rang_T2 = as.numeric(Rang_T2),
+         Temps_T2 = as.numeric(Temps_T2),
+         Retard_T2 = as.numeric(Retard_T2),
+         Rang_T3 = as.numeric(Rang_T3),
+         Temps_T3 = as.numeric(Temps_T3),
+         Retard_T3 = as.numeric(Retard_T3),
+         Rang_T4 = as.numeric(Rang_T4),
+         Temps_T4 = as.numeric(Temps_T4),
+         Retard_T4 = as.numeric(Retard_T4),
+         Temps_Final = as.numeric(Temps_Final),
+         Retard_Final = as.numeric(Retard_Final))
+```
+
+Normaliser tout les temps par rapport aux meilleures temps
+```{r Normalisation}
+base_donnee_num_filtrer <- base_donnee_num %>%
+    filter(!is.na(Temps_T1)) |>
+    filter(!is.na(Temps_T2)) |>
+    filter(!is.na(Temps_T3)) |>
+    filter(!is.na(Temps_T4)) |>
+    filter(!is.na(Temps_Final)) |> 
+  select(Position_Start,nom, Temps_T1, Temps_T2, Temps_T3, Temps_T4, Temps_Final, Manche, Categorie, Typologie_Epreuves, Saison, Epreuves)
+
+```
+
+
+
+
+
+```{r}
+course_bogota <- base_donnee_norm |> 
+  filter(Epreuves == "Bogota", Saison == "2022",
+         Categorie == "MenElite") |>
+  group_by(Manche)
+
+manche_ordre <- c("Round1", "Repechage", "Trente_deuxieme-final", "Seizieme-final", "Huitieme-final", "Quart-final", "Demi-final", "Final")
+
+# Sélectionner les colonnes contenant les temps intermédiaires
+temps_intermediaires <- c("Temps_T1_norm", "Temps_T2_norm", "Temps_T3_norm", "Temps_T4_norm", "Temps_Final_norm")
+
+# Pivoter les colonnes de temps intermédiaire en une seule colonne
+course_bogota_long <- course_bogota %>%
+  gather(key = "Temps_intermediaire", value = "Valeur", temps_intermediaires) %>%
+  mutate(Temps_intermediaire = factor(Temps_intermediaire, levels = temps_intermediaires))
+
+# Créer une nouvelle colonne pour l'ordre des manches
+course_bogota_long$Manche <- factor(course_bogota_long$Manche, 
+                                     levels = c("Round1", "Repechage", "Trente_deuxieme-final", "Seizieme-final", "Huitieme-final", "Quart-final", "Demi-final", "Final"))
+
+boxplot_mean <- ggplot(course_bogota_long, aes(x = Manche, y = Valeur, fill = Temps_intermediaire)) + 
+  stat_boxplot(geom = "errorbar", width = 0.5, position = position_dodge(0.75)) +
+  stat_boxplot(geom = "boxplot", width = 0.5, position = position_dodge(0.75)) +
+  scale_fill_brewer(palette = "Set2") +
+  ylim(0, 1) +
+  facet_grid(Temps_intermediaire ~ ., scales = "free_y", space = "free_y", 
+             switch = "y") +
+  ggtitle("Boîtes à moustaches des temps intermédiaires par manche") +
+  theme(plot.title = element_text(hjust = 0.5), 
+        strip.placement = "outside")
+
+# Ajouter des étiquettes pour les marges inférieures
+bottom_labels <- lapply(levels(course_bogota_long$Temps_intermediaire), function(x) {
+  x <- course_bogota_long[course_bogota_long$Temps_intermediaire == x, ]
+  return(x$Manche)
+})
+bottom_grobs <- lapply(bottom_labels, function(x) {
+  x <- paste(x, collapse = "\n")
+  textGrob(x, gp = gpar(fontsize = 10, fontface = "bold"))
+})
+grid.draw(arrangeGrob(boxplot_mean, bottom = bottom_grobs, as.table = TRUE))
+
+```
+
+
+```{r exploration statistiques}
+###diagrammes dispersion position départ/temps finale
+base_donnee_num_2 <-
+  base_donnee_num |> filter(
+    Categorie == "MenElite",
+    Saison == "2019" |
+      Saison == "2021" |
+      Saison == "2022" | Saison == "2020"
+  )
+
+ggplot(base_donnee_num_2, aes(x = Position_Start, y = Temps_Final)) +
+  geom_point() +
+  labs(title = "Position de départ vs Temps final",
+       x = "Position de départ",
+       y = "Temps final")
+
+##diagramme moustaches distribution des temps finaux à partir des temps de départ 
+ggplot(base_donnee_num_2, aes(x = factor(Position_Start), y = Temps_Final)) +
+  geom_boxplot() +
+  labs(title = "Distribution des temps finaux par position de départ",
+       x = "Position de départ",
+       y = "Temps final")
+
+##Diagramme de dispersion entre positio nde départ et par la suite 
+T1 <- ggplot(base_donnee_num_2, aes(x = Position_Start, y = Rang_T1)) +
+  geom_density2d() +
+  labs(title = "Position de départ vs Classement à T1",
+       x = "Position de départ",
+       y = "Classement à T1")
+
+T2 <- ggplot(base_donnee_num_2, aes(x = Position_Start, y = Rang_T2)) +
+  geom_density2d() +
+  labs(title = "Position de départ vs Classement à T2",
+       x = "Position de départ",
+       y = "Classement à T2")
+
+T3 <- ggplot(base_donnee_num_2, aes(x = Position_Start, y = Rang_T3)) +
+  geom_density2d() +
+  labs(title = "Position de départ vs Classement à T3",
+       x = "Position de départ",
+       y = "Classement à T3")
+
+T4 <- ggplot(base_donnee_num_2, aes(x = Position_Start, y = Rang_T4)) +
+  geom_density2d() +
+  labs(title = "Position de départ vs Classement à T4",
+       x = "Position de départ",
+       y = "Classement à T4")
+
+T5 <- ggplot(base_donnee_num_2, aes(x = Position_Start, y = Classement_final)) +
+  geom_density2d() +
+  labs(title = "Position de départ vs Classement final",
+       x = "Position de départ",
+       y = "Classement final")
+
+combined_plot <- ggarrange(T1, T2, T3, T4, T5, ncol = 2, nrow = 3)
+
+
+# Graphique à bulles pour le classement à T1
+ps_T1 <- ggplot(base_donnee_num_2, aes(x = Position_Start , y = Rang_T1)) +
+  geom_count(aes(size = ..n.., color = ..n..), alpha = 0.7) +
+  scale_size(range = c(1, 10)) +
+  scale_color_gradientn(colors = colorRampPalette(c("blue", "green", "yellow", "orange", "red"))(100)) +
+  labs(title = "Position de départ vs Classement à T1",
+       x = "Position de départ",
+       y = "Classement à T1")
+
+ps_T2 <- ggplot(base_donnee_num_2, aes(x = Position_Start , y = Rang_T2)) +
+  geom_count(aes(size = ..n.., color = ..n..), alpha = 0.7) +
+  scale_size(range = c(1, 10)) +
+  scale_color_gradientn(colors = colorRampPalette(c("blue", "green", "yellow", "orange", "red"))(100)) +
+  labs(title = "Position de départ vs Classement à T2",
+       x = "Position de départ",
+       y = "Classement à T2")
+
+ps_T3 <- ggplot(base_donnee_num_2, aes(x = Position_Start , y = Rang_T3)) +
+  geom_count(aes(size = ..n.., color = ..n..), alpha = 0.7) +
+  scale_size(range = c(1, 10)) +
+  scale_color_gradientn(colors = colorRampPalette(c("blue", "green", "yellow", "orange", "red"))(100)) +
+  labs(title = "Position de départ vs Classement à T3",
+       x = "Position de départ",
+       y = "Classement à T3")
+
+ps_T4 <- ggplot(base_donnee_num_2, aes(x = Position_Start , y = Rang_T4)) +
+  geom_count(aes(size = ..n.., color = ..n..), alpha = 0.7) +
+  scale_size(range = c(1, 10)) +
+  scale_color_gradientn(colors = colorRampPalette(c("blue", "green", "yellow", "orange", "red"))(100)) +
+  labs(title = "Position de départ vs Classement à T4",
+       x = "Position de départ",
+       y = "Classement à T4")
+
+ps_T5 <- ggplot(base_donnee_num_2, aes(x = Position_Start , y = Classement_final)) +
+  geom_count(aes(size = ..n.., color = ..n..), alpha = 0.7) +
+  scale_size(range = c(1, 10)) +
+  scale_color_gradientn(colors = colorRampPalette(c("blue", "green", "yellow", "orange", "red"))(100)) +
+  labs(title = "Position de départ vs Classement à classement_final",
+       x = "Position de départ",
+       y = "Classement final")
+
+combined_plot_ps <- ggarrange(ps_T1, 
+                             ps_T2, 
+                             ps_T3, 
+                             ps_T4,
+                             ps_T5, ncol = 2, nrow = 3)
+################################################################################
+
+T1_T2 <- ggplot(base_donnee_num_2, aes(x = Rang_T1 , y = Rang_T2)) +
+  geom_count(aes(size = ..n.., color = ..n..), alpha = 0.7) +
+  scale_size(range = c(1, 10)) +
+  scale_color_gradientn(colors = colorRampPalette(c("blue", "green", "yellow", "orange", "red"))(100)) +
+  labs(title = "Position à T1 vs Classement à T2",
+       x = "Position à T1",
+       y = "Classement à T2")
+
+T1_T3 <- ggplot(base_donnee_num_2, aes(x = Rang_T1 , y = Rang_T3)) +
+  geom_count(aes(size = ..n.., color = ..n..), alpha = 0.7) +
+  scale_size(range = c(1, 10)) +
+  scale_color_gradientn(colors = colorRampPalette(c("blue", "green", "yellow", "orange", "red"))(100)) +
+  labs(title = "Position à T1 vs Classement à T3",
+       x = "Position à T1",
+       y = "Classement à T3")
+
+T1_T4 <- ggplot(base_donnee_num_2, aes(x = Rang_T1 , y = Rang_T4)) +
+  geom_count(aes(size = ..n.., color = ..n..), alpha = 0.7) +
+  scale_size(range = c(1, 10)) +
+  scale_color_gradientn(colors = colorRampPalette(c("blue", "green", "yellow", "orange", "red"))(100)) +
+  labs(title = "Position à T1 vs Classement à T4",
+       x = "Position à T1",
+       y = "Classement à T4")
+
+T1_T5 <- ggplot(base_donnee_num_2, aes(x = Rang_T1 , y = Classement_final)) +
+  geom_count(aes(size = ..n.., color = ..n..), alpha = 0.7) +
+  scale_size(range = c(1, 10)) +
+  scale_color_gradientn(colors = colorRampPalette(c("blue", "green", "yellow", "orange", "red"))(100)) +
+  labs(title = "Position à T1 vs Classement à classement_final",
+       x = "Position à T1",
+       y = "Classement final")
+
+combined_plot_T1 <- ggarrange(T1_T2,T1_T3, 
+                             T1_T4, T1_T5, ncol = 2, nrow = 2)
+
+##############################################
+T2_T3 <- ggplot(base_donnee_num_2, aes(x = Rang_T2 , y = Rang_T3)) +
+  geom_count(aes(size = ..n.., color = ..n..), alpha = 0.7) +
+  scale_size(range = c(1, 10)) +
+  scale_color_gradientn(colors = colorRampPalette(c("blue", "green", "yellow", "orange", "red"))(100)) +
+  labs(title = "Position à T2 vs Classement à T3",
+       x = "Position à T2",
+       y = "Classement à T3")
+
+T2_T4 <- ggplot(base_donnee_num_2, aes(x = Rang_T2 , y = Rang_T4)) +
+  geom_count(aes(size = ..n.., color = ..n..), alpha = 0.7) +
+  scale_size(range = c(1, 10)) +
+  scale_color_gradientn(colors = colorRampPalette(c("blue", "green", "yellow", "orange", "red"))(100)) +
+  labs(title = "Position à T2 vs Classement à T4",
+       x = "Position à T2",
+       y = "Classement à T4")
+
+T2_T5 <- ggplot(base_donnee_num_2, aes(x = Rang_T2 , y = Classement_final)) +
+  geom_count(aes(size = ..n.., color = ..n..), alpha = 0.7) +
+  scale_size(range = c(1, 10)) +
+  scale_color_gradientn(colors = colorRampPalette(c("blue", "green", "yellow", "orange", "red"))(100)) +
+  labs(title = "Position à T2 vs Classement à classement_final",
+       x = "Position à T2",
+       y = "Classement final")
+
+combined_plot_T2 <- ggarrange(T2_T3, 
+                             T2_T4, T2_T5, ncol = 2, nrow = 2)
+
+##############################################
+T3_T4 <- ggplot(base_donnee_num_2, aes(x = Rang_T3 , y = Rang_T4)) +
+  geom_count(aes(size = ..n.., color = ..n..), alpha = 0.7) +
+  scale_size(range = c(1, 10)) +
+  scale_color_gradientn(colors = colorRampPalette(c("blue", "green", "yellow", "orange", "red"))(100)) +
+  labs(title = "Position à T3 vs Classement à T4",
+       x = "Position à T3",
+       y = "Classement à T4")
+
+T3_T5 <- ggplot(base_donnee_num_2, aes(x = Rang_T3 , y = Classement_final)) +
+  geom_count(aes(size = ..n.., color = ..n..), alpha = 0.7) +
+  scale_size(range = c(1, 10)) +
+  scale_color_gradientn(colors = colorRampPalette(c("blue", "green", "yellow", "orange", "red"))(100)) +
+  labs(title = "Position à T3 vs Classement à classement_final",
+       x = "Position à T3",
+       y = "Classement final")
+
+combined_plot_T3 <- ggarrange(T3_T4, T3_T5, ncol = 2, nrow = 1)
+
+
+##############################################
+#############   Position à T4 ##############
+combined_plot_T4 <- ggplot(base_donnee_num_2, aes(x = Rang_T4 , y = Classement_final)) +
+  geom_count(aes(size = ..n.., color = ..n..), alpha = 0.7) +
+  scale_size(range = c(1, 10)) +
+  scale_color_gradientn(colors = colorRampPalette(c("blue", "green", "yellow", "orange", "red"))(100)) +
+  labs(title = "Position à T4 vs Classement à classement_final",
+       x = "Position à T4",
+       y = "Classement final")
+
+combined_plot_final <- ggarrange(ps_T5, T1_T5,
+                                T2_T5, T3_T5,
+                                combined_plot_T4, 
+                                ncol = 3, nrow = 2)
+
+base_fil <- na.omit(base_donnee_num_2)
+nombre_course <- base_fil |>group_by(Epreuves, Saison, Manche, Typologie_Epreuves, Heat) |> summarise(n = n_distinct(Heat))
+```
+
+```{r explications de variables}
+# Graphique nuage de points : position de départ vs temps final
+p_temps_final <- ggplot(base_donnee_num_2, aes(x = Position_Start, y = Temps_Final)) +
+  geom_point(alpha = 0.5) +
+  labs(title = "Position de départ vs Temps final",
+       x = "Position de départ",
+       y = "Temps final")
+
+# Graphique nuage de points : position de départ vs classement par manche
+p_classement_manche <- ggplot(base_donnee_num_2, aes(x = Position_Start, y = Rang_T1)) +
+  geom_point(alpha = 0.5) +
+  labs(title = "Position de départ vs Classement par manche",
+       x = "Position de départ",
+       y = "Classement par manche")
+
+# Graphique nuage de points : position de départ vs retard sur le premier de la manche
+p_retard <- ggplot(base_donnee_num_2, aes(x = Position_Start, y = Retard_T1)) +
+  geom_point(alpha = 0.5) +
+  labs(title = "Position de départ vs Retard sur le premier de la manche",
+       x = "Position de départ",
+       y = "Retard sur le premier de la manche")
+
+```
+
+Construction d'un modèle d'analyse
+
+```{r}
+library(tidyverse)
+library(broom)
+library(car)
+library(ordinal)
+
+##############################################################################
+#################Modèle de régression logistique sur le rang##################
+#Placer le Classement final comme un facteur de la base de donnée
+base_donnee_num_2$Classement_final <- as.factor(base_donnee_num_2$Classement_final)
+#Modèle de régression ordinal
+modele_ordinal_Rang <- clm(Classement_final ~ Position_Start + Rang_T1 + Rang_T2 + Rang_T3 + Rang_T4 + Retard_T1 + Retard_T2 + Retard_T3 + Retard_T4 + Temps_T1 + Temps_T2 + Temps_T3 + Temps_T4 , data = base_donnee_num_2)
+summary(modele_ordinal_Rang)
+anova(modele_ordinal_Rang, type="II", test="Chisq")
+
+### Les résultats du tests montrent une forte importante de de la position de départ en sprint 
+
+##############################################################################
+#################Modèle de régression logistique sur le retard##################
+modele_ordinal_Retard <- clm(Classement_final ~ Position_Start + Retard_T1 + Retard_T2 + Retard_T3 + Retard_T4, data = base_donnee_num_2)
+summary(modele_ordinal_Retard)
+anova(modele_ordinal_Retard, type="II", test="Chisq")
+###Montre que le retard en bas de buttes joue un rôle important dans l'identification du clasemement final 
+
+##############################################################################
+#################Modèle de régression logistique sur le temps#################
+modele_ordinal_Temps <- clm(Classement_final ~ Position_Start + Temps_T1 + Temps_T2 + Temps_T3 + Temps_T4, data = base_donnee_num_2)
+summary(modele_ordinal_Temps)
+anova(modele_ordinal_Temps, type="II", test="Chisq")
+###Le temps n'apparait comme une variable significative dans le modèle
+
+##############################################################################
+######On peut essayer de faire le modèle avec tout les éléments#############
+modele_ordinal_Totale <- clm(Classement_final ~ Position_Start  +   Retard_T2 + Rang_T2  ,data = base_donnee_num_2)
+summary(modele_ordinal_Totale)
+anova(modele_ordinal_Totale, type="II", test="Chisq")
+
+# Fonction pour calculer le pseudo-R² de Nagelkerke
+nagelkerke_pseudoR2 <- function(model) {
+  null_model <- update(model, . ~ 1)
+  LL_null <- logLik(null_model)[1]
+  LL_model <- logLik(model)[1]
+  r2_numerator <- (LL_null - LL_model)
+  r2_denominator <- (LL_null + (LL_model * (2 * LL_model - LL_null)) / (2 * LL_null))
+  r2 <- r2_numerator / r2_denominator
+  return(r2)
+}
+
+# Calculer le pseudo-R² de Nagelkerke pour le modèle modele_ordinal_Totale
+pseudo_r2 <- nagelkerke_pseudoR2(modele_ordinal_Totale)
+
+# Calculer l'AIC pour le modèle modele_ordinal_Totale
+aic_value <- AIC(modele_ordinal_Totale)
+
+
+# Calculer le BIC pour le modèle modele_ordinal_Totale
+bic_value <- BIC(modele_ordinal_Totale)
+
+# Afficher le BIC
+cat("BIC :", bic_value, "\n") 
+# Afficher le pseudo-R² de Nagelkerke
+cat("Pseudo R² de Nagelkerke :", pseudo_r2,  "\n")
+# Afficher l'AIC
+cat("AIC :", aic_value)
+
+
+base_test <- base_donnee_num_2 |> select(Position_Start, Retard_T2, Rang_T2, Classement_final)
+base_test <- na.omit(base_test)
+
+```
+
+```{r}
+base_anova <- base_donnee_num_2 |> dplyr::select(Position_Start, Rang_T1, Rang_T2, Rang_T3, Rang_T4, Retard_T1, Retard_T2, Retard_T3, Retard_T4, Retard_Final, Temps_T1, Temps_T2, Temps_T3, Temps_T4, Temps_Final, Classement_final)
+
+# Convertir les variables ordonnées en variables numériques
+base_anova$Position_Start <- as.numeric(base_anova$Position_Start)
+base_anova$Rang_T1 <- as.numeric(base_anova$Rang_T1)
+base_anova$Rang_T2 <- as.numeric(base_anova$Rang_T2)
+base_anova$Rang_T3 <- as.numeric(base_anova$Rang_T3)
+base_anova$Rang_T4 <- as.numeric(base_anova$Rang_T4)
+base_anova$Retard_T1 <- as.numeric(base_anova$Retard_T1)
+base_anova$Retard_T2 <- as.numeric(base_anova$Retard_T2)
+base_anova$Retard_T3 <- as.numeric(base_anova$Retard_T3)
+base_anova$Retard_T4 <- as.numeric(base_anova$Retard_T4)
+base_anova$Retard_Final <- as.numeric(base_anova$Retard_Final)
+base_anova$Temps_T1 <- as.numeric(base_anova$Temps_T1)
+base_anova$Temps_T2 <- as.numeric(base_anova$Temps_T2)
+base_anova$Temps_T3 <- as.numeric(base_anova$Temps_T3)
+base_anova$Temps_T4 <- as.numeric(base_anova$Temps_T4)
+base_anova$Temps_Final <- as.numeric(base_anova$Temps_Final)
+base_anova$Classement_final <- as.numeric(base_anova$Classement_final)
+
+# Réaliser l'ANOVA
+model_anova <- lm(Classement_final ~ Position_Start + Rang_T2 + Rang_T4 + Retard_T1 + Retard_T4 +Temps_T1, data = base_anova)
+
+Anova(model_anova, type = "III")
+
+```
+
+
+Utilisations de random forest pour estimer l'importance des variables 
+
+```{r}
+library(randomForest)
+library(caTools)
+
+# Charger les données
+data <- base_test
+
+# Préparer les données
+X <- data[, c("Position_Start", "Retard_T2", "Rang_T2")]
+Y <- data$Classement_final
+
+# Diviser les données en ensembles d'apprentissage et de test
+set.seed(123)
+split_sample <- sample.split(Y, SplitRatio = 0.7)
+train_data <- data[split_sample, ]
+test_data <- data[!split_sample, ]
+
+# Convertir Y_train et Y_test en numérique
+Y_train <- as.numeric(as.character(train_data$Classement_final))
+Y_test <- as.numeric(as.character(test_data$Classement_final))
+
+# Créer et entraîner le modèle de forêt aléatoire
+X_train <- train_data[, c("Position_Start", "Retard_T2", "Rang_T2")]
+rf_model <- randomForest(x = X_train, y = Y_train, importance = TRUE)
+
+# Calculer l'importance des variables
+importance_variable <- importance(rf_model)
+print(importance_variable)
+
+# Évaluer le modèle sur l'ensemble de test
+X_test <- test_data[, c("Position_Start", "Retard_T2", "Rang_T2")]
+y_pred <- predict(rf_model, newdata = X_test)
+
+# Calculer l'erreur quadratique moyenne (RMSE)
+rmse <- sqrt(mean((Y_test - y_pred)^2))
+print(paste("RMSE:", rmse))
+
+# Calculer le coefficient de détermination (R²)
+r_squared <- 1 - (sum((Y_test - y_pred)^2) / sum((Y_test - mean(Y_test))^2))
+print(paste("R-squared:", r_squared))
+```
+
+
+```{r xgBoost }
+library(xgboost)
+library(caret)
+library(pROC)
+
+base_test <- base_donnee_num_2 |> dplyr::select(Position_Start, Rang_T1, Rang_T2, Rang_T3, Retard_T1, Retard_T2, Retard_T3, Temps_T1, Temps_T2, Temps_T3, Classement_final)
+
+base_test <- na.omit(base_test)
+# Charger les données (assurez-vous d'avoir les bonnes colonnes et le bon jeu de données)
+X <- base_test[, c("Position_Start","Temps_T1", "Temps_T2", "Temps_T3", "Rang_T1", "Rang_T2", "Rang_T3", "Retard_T1", "Retard_T2", "Retard_T3")]
+Y <- base_test$Classement_final
+
+# Séparer les données en ensembles d'entraînement et de test
+set.seed(123)
+train_indices <- sample(1:nrow(X), 0.80 * nrow(X))
+
+X_train <- X[train_indices,]
+X_test <- X[-train_indices,]
+y_train <- Y[train_indices]
+y_test <- Y[-train_indices]
+
+#convertir les données en matrices
+train_matrix <- xgb.DMatrix(data = as.matrix(X_train), label = y_train)
+test_matrix <- xgb.DMatrix(data = as.matrix(X_test), label = y_test)
+
+# Définissez les paramètres
+params <- list(
+  objective = "multi:softmax", # Remplacez par 'reg:squarederror' pour la régression
+  eval_metric = "mlogloss",
+  max_depth = 3,
+  eta = 0.1,
+  num_class = 9
+)
+
+# Entraînez le modèle sur les données d'entraînement
+model <- xgb.train(
+  params = params,
+  data = train_matrix,
+  nrounds = 100,
+  watchlist = list(train = train_matrix, test = test_matrix),
+  print_every_n = 10,
+  early_stopping_rounds = 10,
+  maximize = FALSE
+)
+
+# Récupérez l'importance des variables à l'aide de la fonction xgb.importance
+importance <- xgb.importance(feature_names = colnames(X_train), model = model)
+
+
+
+
+
+
+
+
+
+# # Prédictions sur l'ensemble de test
+# y_pred <- predict(xgb_model, test_data)
+# 
+# # Calcul de la RMSE
+# Y_test <- getinfo(test_data, "label")
+# rmse <- sqrt(mean((Y_test - y_pred)^2))
+# print(paste("RMSE:", rmse))
+# 
+# # Calcul du MAE
+# MAE <- MAE(y_pred, Y_test)
+# print(paste("MAE:", MAE))
+# 
+# # Calcul du R-squared
+# R_squared <- cor(Y_test, y_pred)^2
+# print(paste("R-squared:", R_squared))
+# 
+# # Calcul de l'AUC-ROC
+# roc_obj <- roc(Y_test, y_pred)
+# AUC_ROC <- auc(roc_obj)
+# print(paste("AUC-ROC:", AUC_ROC))
+# 
+# # Calcul des mesures de précision, rappel et F-mesure
+# # Calcul de la matrice de confusion
+# y_pred_fac <- cut(y_pred, breaks=c(-Inf, mean(Y_test), Inf), labels=c("0", "1"))
+# Y_test_fac <- cut(Y_test, breaks=c(-Inf, mean(Y_test), Inf), labels=c("0", "1"))
+# conf_matrix <- confusionMatrix(y_pred_fac, Y_test_fac)
+# 
+# 
+# precision <- conf_matrix$overall["Accuracy"]
+# 
+# # Rappel
+# rappel <- conf_matrix$byClass["Sensitivity"]
+# 
+# # F-mesure
+# f_mesure <- conf_matrix$byClass["F1"]
+# 
+# 
+# # Création du tableau de contrôle
+# controle <- data.frame(value = c(rmse, MAE, R_squared, AUC_ROC, precision, rappel, f_mesure), 
+#                        metric = c("RMSE", "MAE", "R_squared", "AUC_ROC", "Precision", "Rappel", "F_mesure"),
+#                        row.names = NULL)
+# xgb.plot.importance(importance_matrix, top_n = 15)
+
+```
+
+```{r position de départ}
+library(MASS)
+library(dplyr)
+
+ordinal_value <- base_test
+ordinal_value$Classement_top4 <-
+  ifelse(
+    ordinal_value$Classement_final == "1" |
+      ordinal_value$Classement_final == "2" |
+      ordinal_value$Classement_final == "3" |
+      ordinal_value$Classement_final == "4",
+    1,
+    0
+  )
+ordinal_value$Classement_top3 <-
+  ifelse(
+    ordinal_value$Classement_final == "1" |
+      ordinal_value$Classement_final == "2" |
+      ordinal_value$Classement_final == "3",
+    1,
+    0
+  )
+
+ordinal_value$Classement_top1 <-
+  ifelse(
+    ordinal_value$Classement_final == "1",
+    1,
+    0
+  )
+
+ordinal_value$Position_Start <- as.factor(ordinal_value$Position_Start)
+ordinal_value$Classement_final <- as.factor(ordinal_value$Classement_final)
+
+# Ajuster un modèle de régression logistique pour prédire la probabilité de se qualifier dans les quatre premiers en fonction de la position de départ
+logit_model_top4 <- glm(Classement_top4 ~ Position_Start, data = ordinal_value, family = binomial(logit))
+
+logit_model_top3 <- glm(Classement_top3 ~ Position_Start, data = ordinal_value, family = binomial(logit))
+
+logit_model_top1 <- glm(Classement_top1 ~ Position_Start, data = ordinal_value, family = binomial(logit))
+# Créer un nouveau jeu de données avec toutes les positions de départ possibles
+new_data <- data.frame(Position_Start = 1:8)
+# Convertir la variable Position_Start en un facteur
+new_data$Position_Start <- as.factor(new_data$Position_Start)
+# Prédire la probabilité de se qualifier dans les quatre premiers pour chaque position de départ
+prob_top4 <- predict(logit_model_top4, newdata = new_data, type = "response")
+
+prob_top3 <- predict(logit_model_top3, newdata = new_data, type = "response")
+
+prob_top1 <- predict(logit_model_top1, newdata = new_data, type = "response")
+# Afficher les résultats
+conclusion <- data.frame(Position_Start = 1:8,Prob_Top4 = prob_top4)
+conclusion <- conclusion |> mutate(Prob_top3 = prob_top3)
+conclusion <- conclusion |> mutate(Prob_top1 = prob_top1)
+conclusion <- round(conclusion, 3)
+
+```
+
+```{r position à T2 }
+ordinal_value$Rang_T2 <- as.factor(ordinal_value$Rang_T2)
+
+logit_model_top4_T2 <- glm(Classement_top4 ~ Rang_T2, data = ordinal_value, family = binomial(logit))
+
+logit_model_top3_T2 <- glm(Classement_top3 ~ Rang_T2, data = ordinal_value, family = binomial(logit))
+
+logit_model_top1_T2 <- glm(Classement_top1 ~ Rang_T2, data = ordinal_value, family = binomial(logit))
+
+# Créer un nouveau jeu de données avec toutes les positions de départ possibles
+new_data_T2 <- data.frame(Rang_T2 = 1:8)
+
+# Convertir la variable Rang_T2 en un facteur
+new_data_T2$Rang_T2 <- as.factor(new_data_T2$Rang_T2)
+
+# Prédire la probabilité de se qualifier dans les quatre premiers pour chaque position de départ
+prob_top4_T2 <- predict(logit_model_top4_T2, newdata = new_data_T2, type = "response")
+
+prob_top3_T2 <- predict(logit_model_top3_T2, newdata = new_data_T2, type = "response")
+
+prob_top1_T2 <- predict(logit_model_top1_T2, newdata = new_data_T2, type = "response")
+
+# Afficher les résultats
+conclusion_T2 <- data.frame(Rang_T2 = 1:8, Prob_Top4 = prob_top4_T2)
+conclusion_T2 <- conclusion_T2 |> mutate(Prob_top3 = prob_top3_T2)
+conclusion_T2 <- conclusion_T2 |> mutate(Prob_top1 = prob_top1_T2)
+conclusion_T2 <- round(conclusion_T2, 3)
+```
+
+
+```{r position à T1 }
+ordinal_value$Rang_T1 <- as.factor(ordinal_value$Rang_T1)
+
+logit_model_top4_T1 <- glm(Classement_top4 ~ Rang_T1, data = ordinal_value, family = binomial(logit))
+
+logit_model_top3_T1 <- glm(Classement_top3 ~ Rang_T1, data = ordinal_value, family = binomial(logit))
+
+logit_model_top1_T1 <- glm(Classement_top1 ~ Rang_T1, data = ordinal_value, family = binomial(logit))
+
+# Créer un nouveau jeu de données avec toutes les positions de départ possibles
+new_data_T1 <- data.frame(Rang_T1 = 1:8)
+
+# Convertir la variable Rang_T1 en un facteur
+new_data_T1$Rang_T1 <- as.factor(new_data_T1$Rang_T1)
+
+# Prédire la probabilité de se qualifier dans les quatre premiers pour chaque position de départ
+prob_top4_T1 <- predict(logit_model_top4_T1, newdata = new_data_T1, type = "response")
+
+prob_top3_T1 <- predict(logit_model_top3_T1, newdata = new_data_T1, type = "response")
+
+prob_top1_T1 <- predict(logit_model_top1_T1, newdata = new_data_T1, type = "response")
+
+# Afficher les résultats
+conclusion_T1 <- data.frame(Rang_T1 = 1:8, Prob_Top4 = prob_top4_T1)
+conclusion_T1 <- conclusion_T1 |> mutate(Prob_top3 = prob_top3_T1)
+conclusion_T1 <- conclusion_T1 |> mutate(Prob_top1 = prob_top1_T1)
+conclusion_T1 <- round(conclusion_T1, 3)
+
+
+```
+
+
+```{r inclusion retard + rang dans modèle régression logistique }
+logit_modele_complet <- glm(Classement_top4 ~ Position_Start+ Rang_T1 + Retard_T1 + Rang_T2 + Retard_T2, data = ordinal_value, family = binomial(logit))
+
+ordinal_value$Retard_T1_classe <- cut(ordinal_value$Retard_T1, breaks = seq(0, max(ordinal_value$Retard_T1) + 0.1, by = 0.1))
+ordinal_value$Retard_T2_classe <- cut(ordinal_value$Retard_T2, breaks = seq(0, max(ordinal_value$Retard_T2) + 0.1, by = 0.1))
+
+# Calculer les probabilités de se qualifier dans les quatre premiers pour chaque classe de retard
+prob_top4_par_classe <- aggregate(Classement_top4 ~ Retard_T1_classe + Retard_T2_classe, data = ordinal_value, FUN = function(x) mean(x))
+
+# Renommer les colonnes pour plus de clarté
+names(prob_top4_par_classe) <- c("Retard_T1_classe", "Retard_T2_classe", "Prob_Top4")
+
+# Tracer un graphique pour visualiser les résultats
+library(ggplot2)
+ggplot(prob_top4_par_classe, aes(x = Retard_T1_classe, y = Retard_T2_classe, fill = Prob_Top4)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(title = "Probabilité de se qualifier dans les quatre premiers en fonction des retards à chaque intermédiaire",
+       x = "Retard à l'intermédiaire 1",
+       y = "Retard à l'intermédiaire 2")
+
+```
+
+
+```{r Catboost modèle }
+library(caret)
+library(devtools)
+library(lattice)
+library(catboost)
+library(pROC)
+library(xgboost)
+
+### Passage en facteur des valeurs catégorielle
+base_donnee_num_2$Classement_final <- ordered(base_donnee_num_2$Classement_final, levels = c(1, 2, 3, 4, 5, 6, 7, 8))
+base_donnee_num_2$Position_Start <- ordered(base_donnee_num_2$Position_Start, levels = c(1, 2, 3, 4, 5, 6, 7, 8))
+base_donnee_num_2$Rang_T1 <- ordered(base_donnee_num_2$Rang_T1, levels = c(1, 2, 3, 4, 5, 6, 7, 8))
+base_donnee_num_2$Rang_T2 <- ordered(base_donnee_num_2$Rang_T2, levels = c(1, 2, 3, 4, 5, 6, 7, 8))
+base_donnee_num_2$Rang_T3 <- ordered(base_donnee_num_2$Rang_T3, levels = c(1, 2, 3, 4, 5, 6, 7, 8))
+base_donnee_num_2$Rang_T4 <- ordered(base_donnee_num_2$Rang_T4, levels = c(1, 2, 3, 4, 5, 6, 7, 8))
+base_donnee_num_2$Classement_final <- as.factor(base_donnee_num_2$Classement_final)
+base_donnee_num_2$Rang_T1 <- as.factor(base_donnee_num_2$Rang_T1)
+base_donnee_num_2$Rang_T2 <- as.factor(base_donnee_num_2$Rang_T2)
+base_donnee_num_2$Rang_T3 <- as.factor(base_donnee_num_2$Rang_T3)
+base_donnee_num_2$Rang_T4 <- as.factor(base_donnee_num_2$Rang_T4)
+base_donnee_num_2$Position_Start <- as.factor(base_donnee_num_2$Position_Start)
+
+
+
+## Partitionnement des données
+base_donnee_num_2$Top4 <- ifelse(base_donnee_num_2$Classement_final <= 4, 1, 0)
+base_donnee_num_2$Top3 <- ifelse(base_donnee_num_2$Classement_final <= 3, 1, 0)
+base_donnee_num_2$Top2 <- ifelse(base_donnee_num_2$Classement_final <= 2, 1, 0)
+base_donnee_num_2$Top1 <- ifelse(base_donnee_num_2$Classement_final <= 1, 1, 0)
+base_test <- base_donnee_num_2 |> dplyr::select(Position_Start, Rang_T2, Retard_T2, Top1)
+
+
+set.seed(123)
+trainIndex <- createDataPartition(base_test$Top1, p = 0.8, list = FALSE)
+train_data <- base_test[trainIndex, ]
+test_data <- base_test[-trainIndex, ]
+
+# Convertir la colonne Classement_final en entier
+train_data$Top1 <- as.integer(train_data$Top1)
+test_data$Top1 <- as.integer(test_data$Top1)
+
+# Liste des indices de colonnes pour les variables catégorielles
+cat_col_indices <- c(1,2,4) # Remplacez ces valeurs par les indices des colonnes de vos variables catégorielles
+
+# Créer un train_pool
+train_pool <- catboost.load_pool(
+  data = train_data[, -which(names(train_data) == "Top1")],
+  label = train_data$Top1
+)
+
+# Créer un test_pool
+test_pool <- catboost.load_pool(
+  data = test_data[, -which(names(test_data) == "Top1")],
+  label = test_data$Top1
+)
+
+# Spécifier les paramètres du modèle CatBoost
+params <- list(
+  iterations = 1000,
+  loss_function = "MultiClass",
+  eval_metric = "Accuracy",
+  random_seed = 123,
+  learning_rate = 0.03,
+  depth = 6,
+  l2_leaf_reg = 3,
+  od_type = "Iter",
+  od_wait = 20
+)
+
+# Entraînement du modèle CatBoost
+model <- catboost.train(
+  learn_pool = train_pool,
+  test_pool = test_pool,
+  params = params
+)
+
+print(model)
+
+###Calculer l'importance des variables 
+feature_importances <- catboost.get_feature_importance(model, type = "FeatureImportance")
+variable_names <- colnames(train_data[, -which(names(train_data) == "Top1")])
+importance_table <- data.frame(Variable = variable_names, Importance = feature_importances)
+## Trie des variables par importance 
+sorted_importance_table <- importance_table[order(-importance_table$Importance), ]
+
+# Création du graphique d'importance de variable
+ggplot(sorted_importance_table, aes(x = Variable, y = Importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Importance des variables", x = "Variables", y = "Importance")
+
+
+###Evaluations de la précisions du modèle 
+#Prédictions sur les données de tests
+predictions <- catboost.predict(model, test_pool, prediction_type = "Class")
+
+# Calcul de la confusion matrice 
+confusion_matrix <- table(Predicted = predictions, Actual = test_data$Top1)
+print(confusion_matrix)
+
+##Calcul de la précision du modèle 
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+
+predicted_classes <- catboost.predict(model, test_pool, prediction_type = "Class")
+predicted_factors <- as.factor((predicted_classes + 1))
+true_factors <- as.factor(test_data$Top1)
+
+cm <- confusionMatrix(predicted_factors, true_factors)
+
+cat(paste("Accuracy:", accuracy))
+```
+
+```{r analyse corrélationnelle position_start/Classement final}
+base_donnee_num_2$Classement_final <- as.numeric(base_donnee_num_2$Classement_final)
+
+base_donnee_num_3 <- na.omit(base_donnee_num_2)
+base_donnee_num_3$Position_Start <- as.numeric(base_donnee_num_3$Position_Start)
+base_donnee_num_3$Rang_T3 <- as.numeric(base_donnee_num_3$Rang_T3)
+base_donnee_num_3$Rang_T4 <- as.numeric(base_donnee_num_3$Rang_T4)
+base_donnee_num_3$Rang_T1 <- as.numeric(base_donnee_num_3$Rang_T1)
+base_donnee_num_3$Rang_T2 <- as.numeric(base_donnee_num_3$Rang_T2)
+
+
+correlation_matrix <- cor(base_donnee_num_3[,c("Position_Start", "Rang_T1", "Rang_T2", "Rang_T3", "Rang_T4", "Classement_final")], method = "kendall")
+
+library(corrplot)
+library(ggcorrplot)
+library(plotly)
+matrice_cor_Spear <- ggcorrplot(
+  correlation_matrix,
+  type = "lower",
+  lab = TRUE,
+  lab_size = 4,
+  method = "circle",
+  title = "Matrice de corrélation spearman courses saison 2020,2021,2022 (all)",
+  ggtheme = ggplot2::theme_gray
+) + scale_fill_gradientn(colors = c("#001EFF", "#FFFF00", "#FF002B"),
+limits = c(0,1), name="Kendall correlation", label=scales::comma)
+
+matrice_cor_Spear <- ggplotly(matrice_cor_Spear)
+```
+
